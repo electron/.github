@@ -1,0 +1,114 @@
+name: Validate Yarn Security Configuration
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+    paths:
+      - 'package.json'
+      - 'yarn.lock'
+      - '.yarnrc.yml'
+      - '**/package.json'
+      - '**/yarn.lock'
+      - '**/.yarnrc.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-yarn-config:
+    name: Validate Yarn Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check for package.json files and validate yarn configuration
+        run: |
+          set -e
+
+          ERRORS=()
+
+          # Find all package.json files
+          PACKAGE_JSON_FILES=$(find . -name 'package.json' -not -path '*/node_modules/*' 2>/dev/null || true)
+
+          if [ -z "$PACKAGE_JSON_FILES" ]; then
+            echo "No package.json files found, skipping validation."
+            exit 0
+          fi
+
+          echo "Found package.json files:"
+          echo "$PACKAGE_JSON_FILES"
+          echo ""
+
+          # Get unique directories containing package.json
+          DIRS=$(echo "$PACKAGE_JSON_FILES" | xargs -I {} dirname {} | sort -u)
+
+          for DIR in $DIRS; do
+            echo "Checking directory: $DIR"
+
+            # Check for yarn.lock
+            if [ ! -f "$DIR/yarn.lock" ]; then
+              ERRORS+=("$DIR: Missing yarn.lock file. All package.json files must have a corresponding yarn.lock.")
+            fi
+
+            # Find .yarnrc.yml - check current dir and parent dirs up to repo root
+            YARNRC_FOUND=""
+            CHECK_DIR="$DIR"
+            while [ "$CHECK_DIR" != "." ] && [ -n "$CHECK_DIR" ]; do
+              if [ -f "$CHECK_DIR/.yarnrc.yml" ]; then
+                YARNRC_FOUND="$CHECK_DIR/.yarnrc.yml"
+                break
+              fi
+              CHECK_DIR=$(dirname "$CHECK_DIR")
+            done
+
+            # Also check root
+            if [ -z "$YARNRC_FOUND" ] && [ -f "./.yarnrc.yml" ]; then
+              YARNRC_FOUND="./.yarnrc.yml"
+            fi
+
+            if [ -z "$YARNRC_FOUND" ]; then
+              ERRORS+=("$DIR: Missing .yarnrc.yml file. All package.json files must have a .yarnrc.yml with security settings.")
+            else
+              echo "  Found .yarnrc.yml at: $YARNRC_FOUND"
+
+              # Check for npmMinimalAgeGate setting
+              if ! grep -q "npmMinimalAgeGate:" "$YARNRC_FOUND"; then
+                ERRORS+=("$YARNRC_FOUND: Missing 'npmMinimalAgeGate' setting. This is required to protect against supply chain attacks by ensuring packages are not installed until they have been published for a minimum amount of time.")
+              else
+                # Verify it's set to a non-zero value
+                AGE_GATE_VALUE=$(grep "npmMinimalAgeGate:" "$YARNRC_FOUND" | sed 's/.*npmMinimalAgeGate:[[:space:]]*//' | tr -d '"' | tr -d "'" || true)
+                if [ "$AGE_GATE_VALUE" = "0" ] || [ "$AGE_GATE_VALUE" = "0s" ] || [ -z "$AGE_GATE_VALUE" ]; then
+                  ERRORS+=("$YARNRC_FOUND: 'npmMinimalAgeGate' must be set to a non-zero duration (e.g., '3 days').")
+                else
+                  echo "  npmMinimalAgeGate is set to: $AGE_GATE_VALUE"
+                fi
+              fi
+            fi
+
+            echo ""
+          done
+
+          # Report errors
+          if [ ${#ERRORS[@]} -gt 0 ]; then
+            echo "::error::Yarn security validation failed!"
+            echo ""
+            echo "The following issues were found:"
+            for ERROR in "${ERRORS[@]}"; do
+              echo "::error::$ERROR"
+            done
+            echo ""
+            echo "To fix these issues:"
+            echo "1. Ensure every directory with a package.json also has a yarn.lock file"
+            echo "2. Add a .yarnrc.yml file with the following minimum security settings:"
+            echo ""
+            echo "   npmMinimalAgeGate: 3 days"
+            echo ""
+            echo "This setting protects against supply chain attacks by ensuring newly published"
+            echo "package versions are not installed until they have been available for review."
+            exit 1
+          fi
+
+          echo "All yarn security validations passed!"
