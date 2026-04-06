@@ -1,0 +1,28 @@
+name: zizmor Static Analysis
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  zizmor:
+    name: zizmor Static Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Dump zizmor config
+        run: |
+          # TODO(dsanders11): Long term we should enable this but it requires manual migration
+          echo -e "rules:\n  secrets-outside-env:\n    disable: true" > zizmor.yml
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@71321a20a9ded102f6e9ce5718a2fcec2c4f70d8 # v0.5.2
+        with:
+          advanced-security: false
+          config: zizmor.yml
+          fail-on-no-inputs: false
