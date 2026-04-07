@@ -8,7 +8,7 @@ permissions: {}
 jobs:
   zizmor:
     name: zizmor Static Analysis
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       contents: read
     steps:
