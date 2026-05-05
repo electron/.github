@@ -1,0 +1,100 @@
+name: Fork PR Approval Enforcement
+
+# Enforces that pull requests opened from forks have at least two approving
+# reviews from users with write (or admin) access to the base repository,
+# independent of any repo-level branch protection or ruleset configuration.
+#
+# Intended to be referenced by an org-wide required-workflow ruleset.
+#
+# `pull_request_target` is used so the GITHUB_TOKEN has read access to the
+# base repository's collaborator-permission API. This workflow does NOT
+# check out or execute any code from the fork, so the elevated trigger is
+# safe here.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed, edited]
+
+permissions: {}
+
+jobs:
+  enforce-fork-approvals:
+    name: Enforce Fork PR Approvals
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Check approvals from users with write access
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+
+          REQUIRED=2
+
+          if [[ -z "${PR_NUMBER:-}" ]]; then
+            echo "No pull_request found in event payload; nothing to enforce."
+            exit 0
+          fi
+
+          if [[ "$BASE_REPO" == "$HEAD_REPO" ]]; then
+            echo "PR head and base are in the same repository; not a fork PR. Skipping."
+            exit 0
+          fi
+
+          echo "Fork PR detected: $HEAD_REPO -> $BASE_REPO #$PR_NUMBER (author: $PR_AUTHOR)"
+          echo "Required approvals from write-access users: $REQUIRED"
+          echo
+
+          # Latest non-comment review per user, keeping only APPROVED ones.
+          # COMMENTED reviews don't change a user's stance, so they're dropped
+          # before grouping. DISMISSED / CHANGES_REQUESTED reviews override an
+          # earlier APPROVED from the same user.
+          mapfile -t APPROVERS < <(
+            gh api --paginate "repos/$BASE_REPO/pulls/$PR_NUMBER/reviews" \
+              | jq -r '
+                  [ .[] | select(.user != null and .state != "COMMENTED") ]
+                  | group_by(.user.login)
+                  | map(max_by(.submitted_at // ""))
+                  | .[]
+                  | select(.state == "APPROVED")
+                  | .user.login
+                '
+          )
+
+          QUALIFIED=()
+          for login in "${APPROVERS[@]:-}"; do
+            [[ -z "$login" ]] && continue
+            if [[ "$login" == "$PR_AUTHOR" ]]; then
+              echo "  - $login: ignored (PR author)"
+              continue
+            fi
+            PERM=$(gh api "repos/$BASE_REPO/collaborators/$login/permission" \
+                    --jq '.permission' 2>/dev/null || echo "none")
+            case "$PERM" in
+              admin|write)
+                QUALIFIED+=("$login")
+                echo "  + $login: counted ($PERM)"
+                ;;
+              *)
+                echo "  - $login: ignored ($PERM access)"
+                ;;
+            esac
+          done
+
+          COUNT=${#QUALIFIED[@]}
+          echo
+          echo "Qualifying approvals: $COUNT / $REQUIRED"
+
+          if (( COUNT < REQUIRED )); then
+            echo "::error::Fork PRs require at least $REQUIRED approving reviews from users with write access to $BASE_REPO. Currently have $COUNT."
+            exit 1
+          fi
+
+          echo "Approval requirement satisfied."
