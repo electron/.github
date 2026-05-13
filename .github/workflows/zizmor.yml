@@ -1,6 +1,7 @@
 name: zizmor Static Analysis
 
 on:
+  merge_group:
   pull_request:
 
 permissions: {}
