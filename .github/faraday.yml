@@ -8,3 +8,6 @@ trusted-bots:
   # Dependency bumps. Reviewed and approved by maintainers.
   - login: dependabot[bot]
     id: 49699333
+# Let one Electron org member (public or private) who didn't commit to the PR
+# give the second approval on PRs that need two, once a maintainer has approved.
+org-member-second-approval: true
