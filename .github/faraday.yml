@@ -5,9 +5,16 @@
 # See: https://github.com/electron/faraday
 
 trusted-bots:
-  # Dependency bumps. Reviewed and approved by maintainers.
+  # Dependency bumps. Reviewed and approved by maintainers. Trusted (1 approval)
+  # only when every changed file is a manifest, lockfile or workflow.
   - login: dependabot[bot]
     id: 49699333
+    paths:
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/yarn.lock'
+      - '.github/workflows/**'
+      - '.github/actions/**'
 # Let one Electron org member (public or private) who didn't commit to the PR
 # give the second approval on PRs that need two, once a maintainer has approved.
 org-member-second-approval: true
